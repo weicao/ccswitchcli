@@ -433,9 +433,9 @@ def summarize_switch(provider: dict[str, Any], write_auth: bool, config_path: Pa
     return row
 
 
-def print_rows(rows: list[dict[str, Any]]) -> None:
+def print_rows(rows: list[dict[str, Any]], empty_message: str = "CC Switch 里还没有供应商。") -> None:
     if not rows:
-        print("CC Switch 里还没有 Codex 供应商。")
+        print(empty_message)
         return
     for row in rows:
         marker = "*" if row.get("current") else " "
@@ -447,27 +447,39 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
         print(f"{marker} {label} ({row['category']}){extra}{model}")
 
 
+def list_apps(app: str | None) -> list[str]:
+    if not app or app == "all":
+        return ["claude", "codex", "grokbuild"]
+    return [resolve_app(app)]
+
+
 def command_list(args: argparse.Namespace) -> int:
     db = args.cc_switch_home / "cc-switch.db"
     settings = load_json(args.cc_switch_home / "settings.json", missing={})
+    apps = list_apps(args.app)
+    grouped: dict[str, list[dict[str, Any]]] = {}
     with open_db(db, readonly=True) as con:
-        providers = load_providers(con, args.app)
-    current = current_provider(providers, settings)
-    active_id = current["id"] if current else None
-    rows = [public_row(p, active_id) for p in providers]
+        for app in apps:
+            providers = load_providers(con, app)
+            current = current_provider(providers, settings, app)
+            active_id = current["id"] if current else None
+            grouped[app] = [public_row(p, active_id) for p in providers]
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
-    else:
-        print_rows(rows)
+        print(json.dumps(grouped if len(apps) > 1 else grouped[apps[0]], ensure_ascii=False, indent=2))
+        return 0
+    for app in apps:
+        print(f"[{APP_LABELS.get(app, app)}]")
+        print_rows(grouped[app], empty_message="  （没有供应商）")
     return 0
 
 
 def command_current(args: argparse.Namespace) -> int:
     db = args.cc_switch_home / "cc-switch.db"
     settings = load_json(args.cc_switch_home / "settings.json", missing={})
+    app = resolve_app(args.app)
     with open_db(db, readonly=True) as con:
-        providers = load_providers(con, args.app)
-    current = current_provider(providers, settings)
+        providers = load_providers(con, app)
+    current = current_provider(providers, settings, app)
     live, live_exists = read_live_config(args.codex_home)
     live_provider = live.get("model_provider")
     result: dict[str, Any] = {
@@ -484,66 +496,130 @@ def command_current(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    label = APP_LABELS.get(app, app)
     if current:
-        print(f"当前 CC Switch Codex 供应商：{current['name']}")
+        print(f"当前 CC Switch {label} 供应商：{current['name']}")
         if result["provider"].get("base_url"):
             print(f"base_url：{result['provider']['base_url']}")
     else:
-        print("当前没有标记为启用的 Codex 供应商。")
-    print(f"Codex 配置：{result['config_path']}")
-    print(f"live model_provider：{live_provider or '（默认官方）'}")
+        print(f"当前没有标记为启用的 {label} 供应商。")
+    print(f"配置：{result['config_path']}")
+    if app == "codex":
+        print(f"live model_provider：{live_provider or '（默认官方）'}")
     return 0
+
+
+def overlay_grok_config(live: dict[str, Any], provider: dict[str, Any]) -> dict[str, Any]:
+    updated = copy.deepcopy(live)
+    snapshot = provider.get("config") or {}
+    for key in GROK_OWNED_KEYS:
+        if key in snapshot:
+            updated[key] = copy.deepcopy(snapshot[key])
+        else:
+            updated.pop(key, None)
+    return updated
+
+
+def overlay_claude_settings(live: dict[str, Any], provider: dict[str, Any]) -> dict[str, Any]:
+    updated = copy.deepcopy(live) if live else {}
+    env = dict(updated.get("env") or {})
+    for key in list(env):
+        if key.startswith("ANTHROPIC_"):
+            del env[key]
+    env.update(provider.get("env") or {})
+    updated["env"] = env
+    return updated
 
 
 def apply_switch(
     *,
     cc_switch_home: Path,
+    app_type: str,
     codex_home: Path,
+    claude_home: Path,
+    grok_home: Path,
     backup_dir: Path,
     provider: dict[str, Any],
     settings_path: Path,
     settings: dict[str, Any],
     dry_run: bool,
 ) -> dict[str, Any]:
-    live, _ = read_live_config(codex_home)
-    updated = overlay_provider_config(live, provider)
-    config_path = codex_home / "config.toml"
-    auth_path = codex_home / "auth.json"
-    write_auth = should_write_auth(provider, settings)
-    summary = summarize_switch(provider, write_auth, config_path)
+    write_auth = False
+    config_path: Path | None = None
+    auth_path: Path | None = None
+    claude_path: Path | None = None
+    grok_path: Path | None = None
+    if app_type == "claude":
+        claude_path = claude_home / "settings.json"
+        summary = summarize_switch(provider, False, claude_path)
+        summary["app"] = "claude"
+    elif app_type == "grokbuild":
+        grok_path = grok_home / "config.toml"
+        summary = summarize_switch(provider, False, grok_path)
+        summary["app"] = "grokbuild"
+        summary["model_provider"] = None
+    else:
+        live, _ = read_live_config(codex_home)
+        config_path = codex_home / "config.toml"
+        auth_path = codex_home / "auth.json"
+        write_auth = should_write_auth(provider, settings)
+        summary = summarize_switch(provider, write_auth, config_path)
+        summary["app"] = "codex"
     if dry_run:
         summary["dry_run"] = True
         return summary
 
     backups = {
-        "config": backup_file(config_path, backup_dir),
-        "auth": backup_file(auth_path, backup_dir) if write_auth else None,
         "settings": backup_file(settings_path, backup_dir),
+        "config": backup_file(config_path, backup_dir) if config_path else None,
+        "auth": backup_file(auth_path, backup_dir) if write_auth and auth_path else None,
+        "claude": backup_file(claude_path, backup_dir) if claude_path else None,
+        "grok": backup_file(grok_path, backup_dir) if grok_path else None,
     }
     summary["backups"] = {key: str(path) for key, path in backups.items() if path}
 
     try:
-        rendered = render_toml(updated) if updated else ""
-        atomic_write_text(config_path, rendered if rendered else "\n")
-        if write_auth:
-            auth = provider.get("auth") or {}
-            payload = json.dumps(auth, ensure_ascii=False, indent=2) + "\n"
-            atomic_write_text(auth_path, payload)
-        settings["currentProviderCodex"] = provider["id"]
+        if app_type == "claude" and claude_path is not None:
+            live_settings = load_json(claude_path, missing={})
+            updated_settings = overlay_claude_settings(live_settings, provider)
+            atomic_write_text(claude_path, json.dumps(updated_settings, ensure_ascii=False, indent=2) + "\n")
+        elif app_type == "grokbuild" and grok_path is not None:
+            live_grok = parse_toml(grok_path.read_text(encoding="utf-8"), str(grok_path)) if grok_path.exists() else {}
+            updated_grok = overlay_grok_config(live_grok, provider)
+            atomic_write_text(grok_path, render_toml(updated_grok) if updated_grok else "\n")
+        else:
+            live, _ = read_live_config(codex_home)
+            updated = overlay_provider_config(live, provider)
+            rendered = render_toml(updated) if updated else ""
+            assert config_path is not None
+            atomic_write_text(config_path, rendered if rendered else "\n")
+            if write_auth and auth_path is not None:
+                auth = provider.get("auth") or {}
+                atomic_write_text(auth_path, json.dumps(auth, ensure_ascii=False, indent=2) + "\n")
+        setting_key = CURRENT_SETTING_KEYS.get(app_type)
+        if setting_key:
+            settings[setting_key] = provider["id"]
         atomic_write_text(settings_path, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
         db_path = cc_switch_home / "cc-switch.db"
         with open_db(db_path, readonly=False) as con:
             con.execute("BEGIN")
-            con.execute("UPDATE providers SET is_current = 0 WHERE app_type = ?", (APP_TYPE,))
+            con.execute("UPDATE providers SET is_current = 0 WHERE app_type = ?", (app_type,))
             con.execute(
                 "UPDATE providers SET is_current = 1 WHERE app_type = ? AND id = ?",
-                (APP_TYPE, provider["id"]),
+                (app_type, provider["id"]),
             )
             con.commit()
     except Exception:
-        for key, path in (("config", config_path), ("auth", auth_path), ("settings", settings_path)):
+        restore_map = {
+            "settings": settings_path,
+            "config": config_path,
+            "auth": auth_path,
+            "claude": claude_path,
+            "grok": grok_path,
+        }
+        for key, path in restore_map.items():
             backup = backups.get(key)
-            if backup and backup.exists():
+            if path and backup and backup.exists():
                 shutil.copy2(backup, path)
         raise
     return summary
@@ -588,15 +664,15 @@ def start_cc_switch_app() -> None:
         time.sleep(0.1)
 
 
-def wait_until_current(cc_switch_home: Path, provider_id: str, timeout: float = 8.0) -> bool:
+def wait_until_current(cc_switch_home: Path, provider_id: str, app_type: str, timeout: float = 8.0) -> bool:
     settings_path = cc_switch_home / "settings.json"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             settings = load_json(settings_path, missing={})
             with open_db(cc_switch_home / "cc-switch.db", readonly=True) as con:
-                providers = load_providers(con)
-            current = current_provider(providers, settings)
+                providers = load_providers(con, app_type)
+            current = current_provider(providers, settings, app_type)
             if current and current["id"] == provider_id:
                 return True
         except CcswitchError:
@@ -609,8 +685,9 @@ def command_switch(args: argparse.Namespace) -> int:
     db = args.cc_switch_home / "cc-switch.db"
     settings_path = args.cc_switch_home / "settings.json"
     settings = load_json(settings_path, missing={})
+    app = resolve_app(args.app)
     with open_db(db, readonly=True) as con:
-        providers = load_providers(con, args.app)
+        providers = load_providers(con, app)
     name = " ".join(args.name) if isinstance(args.name, list) else args.name
     provider = resolve_provider(providers, name)
     bounce_app = (
@@ -623,7 +700,10 @@ def command_switch(args: argparse.Namespace) -> int:
             stop_cc_switch_app()
         summary = apply_switch(
             cc_switch_home=args.cc_switch_home,
+            app_type=app,
             codex_home=args.codex_home,
+            claude_home=args.claude_home,
+            grok_home=args.grok_home,
             backup_dir=args.state_dir / "backups",
             provider=provider,
             settings_path=settings_path,
@@ -632,11 +712,11 @@ def command_switch(args: argparse.Namespace) -> int:
         )
         if bounce_app:
             start_cc_switch_app()
-            if not wait_until_current(args.cc_switch_home, provider["id"]):
+            if not wait_until_current(args.cc_switch_home, provider["id"], app):
                 raise CcswitchError(
                     f"配置已写成 {provider['name']}，但 CC Switch 重新打开后没有保持这个供应商。"
                 )
-            summary["app"] = "reloaded"
+            summary["reloaded"] = True
     except Exception:
         if bounce_app and not cc_switch_running():
             try:
@@ -648,18 +728,19 @@ def command_switch(args: argparse.Namespace) -> int:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     verb = "将切换到" if args.dry_run else "已切换到"
-    print(f"{verb}：{provider['name']}")
+    print(f"{verb}：{provider['name']}（{APP_LABELS.get(app, app)}）")
     if summary.get("base_url"):
         print(f"base_url：{summary['base_url']}")
-    print(f"model_provider：{summary['model_provider'] or '（默认官方）'}")
-    print("auth.json：" + ("会写入该供应商登录信息" if summary["write_auth_json"] else "保留当前官方登录，不覆盖"))
+    if app == "codex":
+        print(f"model_provider：{summary['model_provider'] or '（默认官方）'}")
+        print("auth.json：" + ("会写入该供应商登录信息" if summary["write_auth_json"] else "保留当前官方登录，不覆盖"))
     if args.dry_run:
         print("这是预览，没有改任何文件。")
     elif summary.get("backups"):
         print("已备份：" + ", ".join(summary["backups"].values()))
-    if summary.get("app") == "reloaded":
+    if summary.get("reloaded"):
         print("已重新打开 CC Switch，托盘会显示当前供应商。")
-        print("Codex 需要新开一次才会用新接口。")
+        print("请新开一次对应应用才会用新接口。")
     return 0
 
 
@@ -682,10 +763,11 @@ def doctor_report(args: argparse.Namespace) -> dict[str, Any]:
         return report
     try:
         settings = load_json(settings_path, missing={})
+        app = resolve_app(args.app)
         with open_db(db, readonly=True) as con:
-            providers = load_providers(con, args.app)
-        check("codex_providers", bool(providers), f"{len(providers)} 个")
-        current = current_provider(providers, settings)
+            providers = load_providers(con, app)
+        check("providers", bool(providers), f"{len(providers)} 个")
+        current = current_provider(providers, settings, app)
         check("current_marked", current is not None, current["name"] if current else "未标记")
         live, exists = read_live_config(args.codex_home)
         check("codex_config", True, "可读取" if exists else "尚不存在")
@@ -717,8 +799,10 @@ def command_doctor(args: argparse.Namespace) -> int:
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cc-switch-home", type=Path, default=default_cc_switch_home(), help="CC Switch 数据目录")
     parser.add_argument("--codex-home", type=Path, default=default_codex_home(), help="Codex 配置目录")
+    parser.add_argument("--claude-home", type=Path, default=default_claude_home(), help="Claude Code 配置目录")
+    parser.add_argument("--grok-home", type=Path, default=default_grok_home(), help="Grok 配置目录")
     parser.add_argument("--state-dir", type=Path, default=default_state_dir(), help="CLI 备份目录")
-    parser.add_argument("--app", default=APP_TYPE, help="应用类型，默认 codex")
+    parser.add_argument("--app", default="all", help="应用：cc/claude、codex、grok，默认全部")
     parser.add_argument("--files-only", action="store_true", help="只改配置文件，不点 CC Switch 托盘")
 
 
@@ -733,7 +817,7 @@ KNOWN_COMMANDS = {
     "use",
     "doctor",
 }
-VALUE_OPTIONS = {"--cc-switch-home", "--codex-home", "--state-dir", "--app"}
+VALUE_OPTIONS = {"--cc-switch-home", "--codex-home", "--claude-home", "--grok-home", "--state-dir", "--app"}
 FLAG_OPTIONS = {"--json", "--dry-run", "--files-only", "-h", "--help"}
 
 
@@ -751,6 +835,9 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
         if token in FLAG_OPTIONS or token.startswith("-"):
             index += 1
             continue
+        if token in APP_ALIASES:
+            rewritten = args[:index] + ["--app", APP_ALIASES[token]] + args[index + 1 :]
+            return normalize_argv(rewritten)
         if token in KNOWN_COMMANDS:
             return args
         return args[:index] + ["switch"] + args[index:]

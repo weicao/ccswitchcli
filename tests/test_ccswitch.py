@@ -44,9 +44,13 @@ class CcswitchCliTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.cc_home = self.root / "cc-switch"
         self.codex = self.root / "codex"
+        self.claude = self.root / "claude"
+        self.grok = self.root / "grok"
         self.state = self.root / "state"
         self.cc_home.mkdir()
         self.codex.mkdir()
+        self.claude.mkdir()
+        self.grok.mkdir()
         self.db = self.cc_home / "cc-switch.db"
         self._seed_db()
         self._write_settings(OFFICIAL_ID, preserve=False)
@@ -88,6 +92,27 @@ class CcswitchCliTests(unittest.TestCase):
             "INSERT INTO providers VALUES (?,?,?,?,?,?,?,?)",
             (SUB2API_ID, "codex", "sub2api", json.dumps(sub2api), "https://sub2api.example", None, 2, 0),
         )
+        claude = {"env": {"ANTHROPIC_BASE_URL": "https://www.packyapi.com", "ANTHROPIC_AUTH_TOKEN": "sk-claude-test"}}
+        grok = {
+            "config": """\
+[models]
+default = "grok-4.6"
+
+[model."grok-4.6"]
+model = "grok-4.6"
+base_url = "https://grok.example/v1"
+name = "sub2api"
+api_key = "sk-grok-test"
+"""
+        }
+        con.execute(
+            "INSERT INTO providers VALUES (?,?,?,?,?,?,?,?)",
+            ("claude-1", "claude", "PackyCode", json.dumps(claude), "https://www.packyapi.com", "third_party", 1, 1),
+        )
+        con.execute(
+            "INSERT INTO providers VALUES (?,?,?,?,?,?,?,?)",
+            ("grok-1", "grokbuild", "sub2api", json.dumps(grok), None, "custom", 1, 1),
+        )
         con.commit()
         con.close()
 
@@ -108,6 +133,10 @@ class CcswitchCliTests(unittest.TestCase):
                     str(self.cc_home),
                     "--codex-home",
                     str(self.codex),
+                    "--claude-home",
+                    str(self.claude),
+                    "--grok-home",
+                    str(self.grok),
                     "--state-dir",
                     str(self.state),
                     *args,
@@ -187,6 +216,33 @@ class CcswitchCliTests(unittest.TestCase):
         code, out, err = self.run_cli("openai-offical", "--dry-run")
         self.assertEqual(code, 0, err)
         self.assertIn("OpenAI Official", out)
+
+    def test_list_groups_claude_and_grok(self):
+        code, out, err = self.run_cli()
+        self.assertEqual(code, 0, err)
+        self.assertIn("[Claude Code]", out)
+        self.assertIn("[Grok]", out)
+        self.assertIn("PackyCode", out)
+
+    def test_switch_claude_writes_settings_env(self):
+        (self.claude / "settings.json").write_text(json.dumps({"theme": "dark", "env": {"KEEP": "yes"}}))
+        code, out, err = self.run_cli("cc", "PackyCode")
+        self.assertEqual(code, 0, err)
+        data = json.loads((self.claude / "settings.json").read_text())
+        self.assertEqual(data["theme"], "dark")
+        self.assertEqual(data["env"]["KEEP"], "yes")
+        self.assertEqual(data["env"]["ANTHROPIC_BASE_URL"], "https://www.packyapi.com")
+        self.assertEqual(data["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-claude-test")
+        self.assertNotIn("sk-claude-test", out)
+
+    def test_switch_grok_merges_model_and_keeps_ui(self):
+        (self.grok / "config.toml").write_text('[ui]\nyolo = true\n')
+        code, out, err = self.run_cli("grok", "sub2api")
+        self.assertEqual(code, 0, err)
+        data = ccswitch.tomllib.loads((self.grok / "config.toml").read_text())
+        self.assertTrue(data["ui"]["yolo"])
+        self.assertEqual(data["model"]["grok-4.6"]["base_url"], "https://grok.example/v1")
+        self.assertNotIn("sk-grok-test", out)
 
     def test_unknown_provider_is_rejected(self):
         code, out, err = self.run_cli("switch", "not-a-provider")

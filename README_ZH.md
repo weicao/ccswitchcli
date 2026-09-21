@@ -4,7 +4,7 @@
 
 本地命令行工具，用来操作已经安装的 [CC Switch](https://ccswitch.io)。
 
-当前支持 Codex：列出供应商，并在 `sub2api` 和 `OpenAI Official` 之间切换。
+支持 Codex、Claude Code（`cc`）和 Grok：列出供应商并切换。
 
 它读取 `~/.cc-switch/cc-switch.db`，改 Codex 的 `~/.codex/config.toml`。切换前会备份原文件。命令输出里不会打印 API Key 或登录 token。
 
@@ -30,6 +30,8 @@ install -m 755 ccswitch.py ~/.local/bin/ccswitchcli
 ccswitchcli
 ccswitchcli sub2api
 ccswitchcli openai-official
+ccswitchcli cc PackyCode
+ccswitchcli grok sub2api
 ccswitchcli current
 ccswitchcli doctor
 ```
