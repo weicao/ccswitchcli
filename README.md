@@ -4,7 +4,7 @@
 
 Command-line tool for a local [CC Switch](https://ccswitch.io) install.
 
-It lists Codex providers and switches between them, for example `sub2api` and `OpenAI Official`.
+It lists and switches providers for Codex, Claude Code (`cc`), and Grok.
 
 The CLI reads `~/.cc-switch/cc-switch.db` and updates Codex `~/.codex/config.toml`. It backs up files before writing. Command output never prints API keys or login tokens.
 
@@ -30,6 +30,8 @@ Then run `ccswitchcli`.
 ccswitchcli
 ccswitchcli sub2api
 ccswitchcli openai-official
+ccswitchcli cc PackyCode
+ccswitchcli grok sub2api
 ccswitchcli current
 ccswitchcli doctor
 ```
