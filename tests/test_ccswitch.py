@@ -244,6 +244,22 @@ api_key = "sk-grok-test"
         self.assertEqual(data["model"]["grok-4.6"]["base_url"], "https://grok.example/v1")
         self.assertNotIn("sk-grok-test", out)
 
+    def test_switch_away_saves_live_codex_login(self):
+        (self.codex / "auth.json").write_text(
+            json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": "tok-new-login"}})
+        )
+        code, out, err = self.run_cli("switch", "sub2api")
+        self.assertEqual(code, 0, err)
+        con = sqlite3.connect(self.db)
+        saved = json.loads(con.execute("SELECT settings_config FROM providers WHERE id=?", (OFFICIAL_ID,)).fetchone()[0])
+        con.close()
+        self.assertEqual(saved["auth"]["tokens"]["access_token"], "tok-new-login")
+        code, out, err = self.run_cli("switch", "openai-official")
+        self.assertEqual(code, 0, err)
+        live = json.loads((self.codex / "auth.json").read_text())
+        self.assertEqual(live["tokens"]["access_token"], "tok-new-login")
+        self.assertNotIn("tok-new-login", out)
+
     def test_unknown_provider_is_rejected(self):
         code, out, err = self.run_cli("switch", "not-a-provider")
         self.assertEqual(code, 2)

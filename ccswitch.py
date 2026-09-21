@@ -526,6 +526,62 @@ def overlay_claude_settings(live: dict[str, Any], provider: dict[str, Any]) -> d
     return updated
 
 
+def persist_outgoing_live_auth(
+    *,
+    cc_switch_home: Path,
+    app_type: str,
+    outgoing: dict[str, Any],
+    auth_path: Path | None,
+    claude_path: Path | None,
+) -> None:
+    """Save the live login back into the provider we are leaving."""
+    db_path = cc_switch_home / "cc-switch.db"
+    with open_db(db_path, readonly=False) as con:
+        row = con.execute(
+            "SELECT settings_config FROM providers WHERE app_type = ? AND id = ?",
+            (app_type, outgoing["id"]),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            payload = json.loads(row[0])
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        if app_type == "codex" and auth_path is not None and auth_path.exists():
+            try:
+                live_auth = json.loads(auth_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                live_auth = None
+            if isinstance(live_auth, dict):
+                payload["auth"] = live_auth
+        elif app_type == "claude" and claude_path is not None and claude_path.exists():
+            live_settings = load_json(claude_path, missing={})
+            env = live_settings.get("env") if isinstance(live_settings.get("env"), dict) else {}
+            anth = {key: value for key, value in env.items() if str(key).startswith("ANTHROPIC_")}
+            if anth:
+                merged = dict(payload.get("env") or {})
+                merged.update(anth)
+                payload["env"] = merged
+        else:
+            return
+        con.execute(
+            "UPDATE providers SET settings_config = ? WHERE app_type = ? AND id = ?",
+            (json.dumps(payload, ensure_ascii=False), app_type, outgoing["id"]),
+        )
+        con.commit()
+
+
+def reload_provider(cc_switch_home: Path, app_type: str, provider_id: str) -> dict[str, Any] | None:
+    with open_db(cc_switch_home / "cc-switch.db", readonly=True) as con:
+        providers = load_providers(con, app_type)
+    for item in providers:
+        if item["id"] == provider_id:
+            return item
+    return None
+
+
 def apply_switch(
     *,
     cc_switch_home: Path,
@@ -574,6 +630,21 @@ def apply_switch(
     summary["backups"] = {key: str(path) for key, path in backups.items() if path}
 
     try:
+        with open_db(cc_switch_home / "cc-switch.db", readonly=True) as con:
+            existing = load_providers(con, app_type)
+        outgoing = current_provider(existing, settings, app_type)
+        if outgoing:
+            persist_outgoing_live_auth(
+                cc_switch_home=cc_switch_home,
+                app_type=app_type,
+                outgoing=outgoing,
+                auth_path=auth_path or (codex_home / "auth.json" if app_type == "codex" else None),
+                claude_path=claude_path,
+            )
+            if outgoing["id"] == provider["id"]:
+                refreshed = reload_provider(cc_switch_home, app_type, provider["id"])
+                if refreshed is not None:
+                    provider = refreshed
         if app_type == "claude" and claude_path is not None:
             live_settings = load_json(claude_path, missing={})
             updated_settings = overlay_claude_settings(live_settings, provider)
