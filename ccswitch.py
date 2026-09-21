@@ -23,11 +23,33 @@ from typing import Any
 
 try:
     import tomllib
-except ModuleNotFoundError as exc:  # pragma: no cover - Python 3.11+ is required
-    raise SystemExit("CCSwitch CLI requires Python 3.11 or newer") from exc
+except ModuleNotFoundError:  # Python < 3.11
+    try:
+        import tomli as tomllib  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "当前 Python 低于 3.11。请安装 tomli：python3 -m pip install tomli"
+        ) from exc
 
 
 APP_TYPE = "codex"
+APP_ALIASES = {
+    "cc": "claude",
+    "claude": "claude",
+    "codex": "codex",
+    "grok": "grokbuild",
+    "grokbuild": "grokbuild",
+}
+APP_LABELS = {
+    "claude": "Claude Code",
+    "codex": "Codex",
+    "grokbuild": "Grok",
+}
+CURRENT_SETTING_KEYS = {
+    "claude": "currentProviderClaude",
+    "codex": "currentProviderCodex",
+}
+GROK_OWNED_KEYS = {"models", "model"}
 OFFICIAL_ALIASES = {
     "openai-official",
     "openai",
@@ -60,6 +82,23 @@ def default_cc_switch_home() -> Path:
 
 def default_codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+
+
+def default_claude_home() -> Path:
+    return Path(os.environ.get("CLAUDE_HOME", "~/.claude")).expanduser()
+
+
+def default_grok_home() -> Path:
+    return Path(os.environ.get("GROK_HOME", "~/.grok")).expanduser()
+
+
+def resolve_app(value: str | None, default: str = APP_TYPE) -> str:
+    if not value or value == "all":
+        return default
+    key = value.strip().lower()
+    if key in APP_ALIASES:
+        return APP_ALIASES[key]
+    raise CcswitchError(f"不支持的应用 {value!r}。可用：cc / claude、codex、grok。")
 
 
 def default_state_dir() -> Path:
@@ -201,6 +240,22 @@ def provider_api_key(auth: Any) -> str | None:
     return None
 
 
+def extract_base_url_from_provider(provider: dict[str, Any]) -> str | None:
+    env = provider.get("env") or {}
+    url = env.get("ANTHROPIC_BASE_URL")
+    if isinstance(url, str) and url.strip():
+        return url.strip()
+    cfg = provider.get("config") or {}
+    model = cfg.get("model")
+    if isinstance(model, dict):
+        for value in model.values():
+            if isinstance(value, dict):
+                nested = value.get("base_url")
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()
+    return extract_base_url(cfg)
+
+
 def extract_base_url(config: dict[str, Any]) -> str | None:
     providers = config.get("model_providers")
     if not isinstance(providers, dict):
@@ -243,7 +298,10 @@ def load_providers(con: sqlite3.Connection, app_type: str = APP_TYPE) -> list[di
                 "website_url": row["website_url"],
                 "category": row["category"],
                 "is_current": bool(row["is_current"]),
+                "app_type": app_type,
                 "auth": settings.get("auth") if isinstance(settings.get("auth"), dict) else {},
+                "env": settings.get("env") if isinstance(settings.get("env"), dict) else {},
+                "payload": settings,
                 "config": config,
                 "config_text": settings.get("config") or "",
             }
@@ -282,8 +340,12 @@ def resolve_provider(providers: list[dict[str, Any]], query: str) -> dict[str, A
     raise CcswitchError(f"找不到供应商 {query!r}。可用项：{available}。{hint}".rstrip())
 
 
-def current_provider(providers: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any] | None:
-    current_id = settings.get("currentProviderCodex")
+def current_provider(
+    providers: list[dict[str, Any]],
+    settings: dict[str, Any],
+    app_type: str = APP_TYPE,
+) -> dict[str, Any] | None:
+    current_id = settings.get(CURRENT_SETTING_KEYS.get(app_type, ""))
     if isinstance(current_id, str) and current_id:
         for provider in providers:
             if provider["id"] == current_id:
@@ -309,7 +371,7 @@ def public_row(provider: dict[str, Any], active_id: str | None) -> dict[str, Any
         "current": provider["id"] == active_id,
         "official": is_official(provider),
     }
-    base_url = extract_base_url(provider["config"])
+    base_url = extract_base_url_from_provider(provider)
     if base_url:
         row["base_url"] = base_url
     website = provider.get("website_url")
