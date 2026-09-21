@@ -1,5 +1,7 @@
 # CCSwitch CLI
 
+Version 0.1.
+
 [中文文档](README_ZH.md)
 
 Command-line tool for a local [CC Switch](https://ccswitch.io) install.
