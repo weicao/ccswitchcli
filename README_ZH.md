@@ -1,5 +1,7 @@
 # CCSwitch CLI
 
+版本 0.1。
+
 [English](README.md)
 
 本地命令行工具，用来操作已经安装的 [CC Switch](https://ccswitch.io)。

@@ -27,7 +27,31 @@ except ModuleNotFoundError as exc:
     raise SystemExit("需要 Python 3.11 或更高（自带 tomllib）。") from exc
 
 
+VERSION = "0.1"
 APP_TYPE = "codex"
+AGENT_HELP = """ccswitchcli 0.1
+
+Switch CC Switch providers from the terminal. Does not print API keys.
+
+Commands:
+  ccswitchcli                         list Codex / Claude Code / Grok providers
+  ccswitchcli help                    this help (for humans and agents)
+  ccswitchcli version                 print 0.1
+  ccswitchcli current [--app APP]     show current provider
+  ccswitchcli doctor [--app APP]      check config
+  ccswitchcli APP                     list one app
+  ccswitchcli APP PROVIDER            switch that app to PROVIDER
+  ccswitchcli switch PROVIDER         switch Codex
+
+APP: cc | claude | codex | grok
+
+Examples:
+  ccswitchcli
+  ccswitchcli cc PackyCode
+  ccswitchcli grok sub2api
+  ccswitchcli codex apple
+  ccswitchcli openai-official
+"""
 APP_ALIASES = {
     "cc": "claude",
     "claude": "claude",
@@ -849,6 +873,16 @@ def doctor_report(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def command_help(_args: argparse.Namespace) -> int:
+    print(AGENT_HELP.strip())
+    return 0
+
+
+def command_version(_args: argparse.Namespace) -> int:
+    print(f"ccswitchcli {VERSION}")
+    return 0
+
+
 def command_doctor(args: argparse.Namespace) -> int:
     report = doctor_report(args)
     if args.json:
@@ -880,9 +914,11 @@ KNOWN_COMMANDS = {
     "switch",
     "use",
     "doctor",
+    "help",
+    "version",
 }
 VALUE_OPTIONS = {"--cc-switch-home", "--codex-home", "--claude-home", "--grok-home", "--state-dir", "--app"}
-FLAG_OPTIONS = {"--json", "--dry-run", "--files-only", "-h", "--help"}
+FLAG_OPTIONS = {"--json", "--dry-run", "--files-only", "-h", "--help", "-V", "--version"}
 
 
 def normalize_argv(argv: list[str] | None) -> list[str]:
@@ -905,7 +941,7 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
         if token in KNOWN_COMMANDS:
             return args
         return args[:index] + ["switch"] + args[index:]
-    if any(token in {"-h", "--help"} for token in args):
+    if any(token in {"-h", "--help", "-V", "--version"} for token in args):
         return args
     return args + ["list"]
 
@@ -913,8 +949,10 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ccswitchcli",
-        description="操作本地 CC Switch：列出并切换 Codex 供应商（例如 sub2api / OpenAI Official）。",
+        description=AGENT_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("-V", "--version", action="version", version=f"ccswitchcli {VERSION}")
     add_common(parser)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -932,9 +970,15 @@ def build_parser() -> argparse.ArgumentParser:
     switch.add_argument("--json", action="store_true")
     switch.set_defaults(func=command_switch)
 
-    doctor = sub.add_parser("doctor", help="检查 CC Switch 与 Codex 配置是否一致")
+    doctor = sub.add_parser("doctor", help="检查 CC Switch 与当前应用配置是否一致")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=command_doctor)
+
+    help_parser = sub.add_parser("help", help="显示给人和 agent 看的用法")
+    help_parser.set_defaults(func=command_help)
+
+    version_parser = sub.add_parser("version", help="显示版本号")
+    version_parser.set_defaults(func=command_version)
     return parser
 
 

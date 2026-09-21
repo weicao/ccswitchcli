@@ -144,6 +144,15 @@ api_key = "sk-grok-test"
             )
         return code, out.getvalue(), err.getvalue()
 
+    def test_version_and_help(self):
+        code, out, err = self.run_cli("version")
+        self.assertEqual(code, 0, err)
+        self.assertIn("0.1", out)
+        code, out, err = self.run_cli("help")
+        self.assertEqual(code, 0, err)
+        self.assertIn("ccswitchcli 0.1", out)
+        self.assertIn("ccswitchcli APP PROVIDER", out)
+
     def test_list_shows_both_providers(self):
         code, out, err = self.run_cli("list")
         self.assertEqual(code, 0, err)
