@@ -1,28 +1,30 @@
 # CCSwitch CLI
 
-本地命令行工具，用来操作已经安装的 CC Switch。
+[中文文档](README_ZH.md)
 
-当前支持 Codex：列出供应商，并在 `sub2api` 和 `OpenAI Official` 之间切换。
+Command-line tool for a local [CC Switch](https://ccswitch.io) install.
 
-它读取 `~/.cc-switch/cc-switch.db`，改 Codex 的 `~/.codex/config.toml`。切换前会备份原文件。命令输出里不会打印 API Key 或登录 token。
+It lists Codex providers and switches between them, for example `sub2api` and `OpenAI Official`.
 
-## 安装
+The CLI reads `~/.cc-switch/cc-switch.db` and updates Codex `~/.codex/config.toml`. It backs up files before writing. Command output never prints API keys or login tokens.
 
-一条命令：
+## Install
+
+One command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/weicao/ccswitchcli/main/install.sh | bash
 ```
 
-或本地安装：
+Or install from a local checkout:
 
 ```bash
 install -m 755 ccswitch.py ~/.local/bin/ccswitchcli
 ```
 
-装好后直接运行 `ccswitchcli`。
+Then run `ccswitchcli`.
 
-## 快速开始
+## Quick start
 
 ```bash
 ccswitchcli
@@ -32,23 +34,27 @@ ccswitchcli current
 ccswitchcli doctor
 ```
 
-常用选项：
+The list prints the switch command first when it differs from the CC Switch display name. Use `openai-official` for OpenAI Official.
 
-- `--cc-switch-home PATH`：CC Switch 数据目录，默认 `~/.cc-switch`
-- `--codex-home PATH`：Codex 配置目录，默认 `$CODEX_HOME` 或 `~/.codex`
-- `switch NAME --dry-run`：只预览，不写文件
-- `list --json`、`current --json`、`switch NAME --json`：机器可读输出
+Common options:
 
-## 切换时会先关掉 CC Switch，写好配置，再重新打开。这样托盘会跟命令一致。不需要辅助功能权限。
+- `--cc-switch-home PATH`: CC Switch data directory (default `~/.cc-switch`)
+- `--codex-home PATH`: Codex config directory (default `$CODEX_HOME` or `~/.codex`)
+- `--dry-run`: preview a switch without writing files
+- `--json`: machine-readable output
 
-## 切换时会改什么
+## How switching works
 
-- 切到 `sub2api`：把 Codex 的 `model_provider` 写成 CC Switch 里保存的第三方配置，并带上对应接口地址。
-- 切回 `OpenAI Official`：去掉第三方 `model_provider`，恢复官方路径。
-- 不会丢掉当前 Codex 里的项目信任、插件等其它设置。
-- 如果 CC Switch 打开了「切换第三方时保留官方登录」，则不覆盖 `auth.json`。
+The command stops CC Switch, writes the provider into Codex config, then starts CC Switch again so the tray matches. Accessibility permission is not required.
 
-## 测试
+- Switch to `sub2api`: set Codex `model_provider` from the saved third-party provider, including its API endpoint.
+- Switch to `openai-official`: remove the third-party `model_provider` and restore the official path.
+- Other Codex settings (project trust, plugins) are kept.
+- If CC Switch has “Keep official login when switching third-party providers” enabled, `auth.json` is not overwritten.
+
+Restart Codex after switching so it picks up the new provider.
+
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
