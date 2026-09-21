@@ -23,13 +23,8 @@ from typing import Any
 
 try:
     import tomllib
-except ModuleNotFoundError:  # Python < 3.11
-    try:
-        import tomli as tomllib  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise SystemExit(
-            "当前 Python 低于 3.11。请安装 tomli：python3 -m pip install tomli"
-        ) from exc
+except ModuleNotFoundError as exc:
+    raise SystemExit("需要 Python 3.11 或更高（自带 tomllib）。") from exc
 
 
 APP_TYPE = "codex"
