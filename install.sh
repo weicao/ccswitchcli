@@ -14,7 +14,7 @@ python_ok() {
   if ! command -v "${cmd}" >/dev/null 2>&1 && [[ ! -x "${cmd}" ]]; then
     return 1
   fi
-  "${cmd}" -c 'import sys; raise SystemExit(0 if sys.version_info[0] == 3 and sys.version_info[1] >= 9 else 1)' >/dev/null 2>&1
+  "${cmd}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
 }
 
 pick_python() {
@@ -43,7 +43,7 @@ pick_python() {
 }
 
 if ! PY="$(pick_python)"; then
-  echo "找不到 Python 3.9+。请安装 Python，二进制名可以是 python 或 python3（Homebrew 一般是 /opt/homebrew/bin/python3）。" >&2
+  echo "找不到 Python 3.11+。请安装 Python，二进制名可以是 python 或 python3（Homebrew 一般是 /opt/homebrew/bin/python3）。" >&2
   exit 1
 fi
 
@@ -57,17 +57,6 @@ if ! curl -fsSL "${BASE}/ccswitch.py" -o "${tmp}"; then
 fi
 install -m 755 "${tmp}" "${SCRIPT}"
 
-"${PY}" - <<'PY'
-import subprocess, sys
-if sys.version_info < (3, 11):
-    try:
-        import tomli  # noqa: F401
-    except ImportError:
-        cmd = [sys.executable, "-m", "pip", "install", "--user", "tomli"]
-        print("Python 低于 3.11，正在安装 tomli：", " ".join(cmd))
-        subprocess.check_call(cmd)
-PY
-
 cat > "${BIN}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -77,14 +66,14 @@ python_ok() {
   if ! command -v "\${cmd}" >/dev/null 2>&1 && [[ ! -x "\${cmd}" ]]; then
     return 1
   fi
-  "\${cmd}" -c 'import sys; raise SystemExit(0 if sys.version_info[0] == 3 and sys.version_info[1] >= 9 else 1)' >/dev/null 2>&1
+  "\${cmd}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
 }
 for candidate in python3 python /opt/homebrew/bin/python3 /opt/homebrew/bin/python /usr/local/bin/python3 /usr/local/bin/python python3.13 python3.12 python3.11 "${PY}"; do
   if python_ok "\${candidate}"; then
     exec "\${candidate}" "\${SCRIPT}" "\$@"
   fi
 done
-echo "找不到 Python 3.9+（python 或 python3）。" >&2
+echo "找不到 Python 3.11+（python 或 python3）。" >&2
 exit 1
 EOF
 chmod +x "${BIN}"
