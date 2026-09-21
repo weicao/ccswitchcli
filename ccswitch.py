@@ -630,21 +630,9 @@ def apply_switch(
     summary["backups"] = {key: str(path) for key, path in backups.items() if path}
 
     try:
-        with open_db(cc_switch_home / "cc-switch.db", readonly=True) as con:
-            existing = load_providers(con, app_type)
-        outgoing = current_provider(existing, settings, app_type)
-        if outgoing:
-            persist_outgoing_live_auth(
-                cc_switch_home=cc_switch_home,
-                app_type=app_type,
-                outgoing=outgoing,
-                auth_path=auth_path or (codex_home / "auth.json" if app_type == "codex" else None),
-                claude_path=claude_path,
-            )
-            if outgoing["id"] == provider["id"]:
-                refreshed = reload_provider(cc_switch_home, app_type, provider["id"])
-                if refreshed is not None:
-                    provider = refreshed
+        refreshed = reload_provider(cc_switch_home, app_type, provider["id"])
+        if refreshed is not None:
+            provider = refreshed
         if app_type == "claude" and claude_path is not None:
             live_settings = load_json(claude_path, missing={})
             updated_settings = overlay_claude_settings(live_settings, provider)
@@ -762,6 +750,16 @@ def command_switch(args: argparse.Namespace) -> int:
         and is_real_cc_switch_home(args.cc_switch_home)
     )
     try:
+        if not args.dry_run:
+            outgoing = current_provider(providers, settings, app)
+            if outgoing:
+                persist_outgoing_live_auth(
+                    cc_switch_home=args.cc_switch_home,
+                    app_type=app,
+                    outgoing=outgoing,
+                    auth_path=args.codex_home / "auth.json" if app == "codex" else None,
+                    claude_path=args.claude_home / "settings.json" if app == "claude" else None,
+                )
         if bounce_app:
             stop_cc_switch_app()
         summary = apply_switch(
